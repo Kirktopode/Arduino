@@ -23,6 +23,7 @@ class JKeypad {
     };
     int xpins[4];
     int ypins[4];
+    int press[2];
     int checkXpins();
     void checkPins(int* pins);
     void processNumInput(const int* pins);

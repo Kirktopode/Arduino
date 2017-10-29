@@ -17,6 +17,8 @@ JKeypad::JKeypad(uint8_t x0, uint8_t x1, uint8_t x2, uint8_t x3,
   ypins[1] = y1;
   ypins[2] = y2;
   ypins[3] = y3;
+  press[0] = -1;
+  press[1] = -1;
   for(int i = 0; i < 4; i++){
     pinMode(xpins[i],INPUT);
     pinMode(ypins[i],OUTPUT);
@@ -34,32 +36,60 @@ JKeypad::JKeypad(uint8_t x0, uint8_t x1, uint8_t x2, uint8_t x3,
 int JKeypad::checkXpins(){
   for (int i = 0; i < 4; i++) {
     if (digitalRead(xpins[i]) ) {
-      while (digitalRead(xpins[i])){ /* Do not allow additional processing until button is released */
-        delay(20);
+      delay(5); //Wait 5 milliseconds to avoid button bounce
+      if (!digitalRead(xpins[i])){
+        return i;
+      }else{
+        press[1] = i;
+        return -1;
       }
-      return i;
     }
   }
   return -1;
 }
 void JKeypad::checkPins(int* pins){
+  if(press[0] > -1 && press[1] > -1){
+    /*Serial.print("press 0, 1: ");
+    Serial.print(press[0]);
+    Serial.print(", ");
+    Serial.println(press[1]);
+    Serial.println(digitalRead(press[1]));*/
+    digitalWrite(ypins[press[0]], HIGH);
+    delay(10);
+    if(digitalRead(xpins[press[1]]) == LOW){
+      pins[0] = press[0];
+      pins[1] = press[1];
+      press[0] = -1;
+      press[1] = -1;
+      digitalWrite(ypins[press[0]], LOW);
+      return;
+    }else{
+      pins[0] = -1;
+      pins[1] = -1;
+      digitalWrite(ypins[press[0]], LOW);
+      return;
+    }
+  }
   int Xpin;
   for (int i = 0; i < 4; i++) {
     digitalWrite(ypins[i], LOW);
   }
   for (int i = 0; i < 4; i++) {
     digitalWrite(ypins[i], HIGH);
-    delay(5);
+    //delay(5);
     if ( (Xpin = checkXpins()) > -1) {
       pins[0] = i;
       pins[1] = Xpin;
       return;
+    }else if(press[1] > -1){
+      press[0] = i;
+      pins[0] = pins[1] = -1;
+      return;
     }
     digitalWrite(ypins[i], LOW);
-    delay(5);
+    //delay(5);
   }
-  pins[0] = -1;
-  pins[1] = -1;
+  pins[0] = pins[1] = -1;
 }
 
 char JKeypad::getPress(){
