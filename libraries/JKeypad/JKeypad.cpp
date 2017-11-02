@@ -55,7 +55,7 @@ void JKeypad::checkPins(int* pins){
     Serial.println(press[1]);
     Serial.println(digitalRead(press[1]));*/
     digitalWrite(ypins[press[0]], HIGH);
-    delay(10);
+    //delay(10);
     if(digitalRead(xpins[press[1]]) == LOW){
       pins[0] = press[0];
       pins[1] = press[1];

@@ -1,17 +1,39 @@
 #include <JKeypad.h>
 #include <SoftwareSerial.h>
 #include <NewPing.h>
+#include <NewTone.h>
 #include <string.h>
+
+#define TIMER_ENABLED true
 
 enum State {
   SETPIN, CALIBRATE, DISARMED, ARMED, ALARM
 };
 
+int myAbs(int val){
+  if(val < 0){
+    return -val;
+  }
+  return val;
+}
+float myAbs(float val){
+  if(val < 0){
+    return -val;
+  }
+  return val;
+}
+unsigned long myAbs(unsigned long val){
+  if(val < 0){
+    return -val;
+  }
+  return val;
+}
 class SecuritySystem{
   private:
     int calibratedDistance;  //To be used to store the distance that the calibration routine finds.
-    int calibrateBuffer[50]; //Buffer for the calibration process
-    char PIN[5];// = "    "; //User PIN
+    int sonarBuffer[50]; //Buffer for the calibration process
+    unsigned long firstTrip; //unsigned long to store when the sonar first saw the alarm getting tripped
+    char PIN[5];             //User PIN
     char tryPIN[5];          //Buffer to store the user's attempt at guessing the PIN
     JKeypad &keypad;         //JKeypad object reference for the keypad, using Jameson's JKeypad library
     SoftwareSerial &screen;  //SoftwareSerial reference for the LCD
@@ -19,6 +41,11 @@ class SecuritySystem{
     State state;             //Stores the current state, an enumerated value defined above
     bool tripped;            //Stores whether the alarm is tripped. Redundant with alarmTripped()?
     bool testing;            //Stores whether the test mode is active
+    const int redPin0;
+    const int redPin1;
+    const int bluePin0;
+    const int bluePin1;
+    const int buzPin;
 
     /*
      * clearScreen is a simple method for clearing the LCD screen.
@@ -66,10 +93,42 @@ class SecuritySystem{
      * data if necessary (it will probably be necessary).
      */
     void calibrateRoutine(){
+      
       clearScreen();
-      screenLineOne("Calibrate not");
-      screenLineTwo("implemented");
-      delay(1000);
+      screenLineOne("Calibrating.....");
+      int tries = 0;
+      calibratedDistance = -1;
+
+      while(calibratedDistance < 0 && tries < 5){
+        for(int i = 0; i < 50; i++){
+          sonarBuffer[i] = sonar.ping_cm();
+          delay(20);
+        }
+        float avg = 0;
+        for(int i = 0; i < 50; i++){
+          avg += sonarBuffer[i];
+        }
+        avg /= 50;
+
+        int i;
+        for(i = 0; i < 50; i++){
+          if(myAbs(sonarBuffer[i] - avg) > 3){
+            break;
+          }
+        }
+        if(i >= 50){
+          calibratedDistance = (int)avg;
+        }else{
+          tries++;
+        }
+      }
+
+      if(calibratedDistance < 0){
+        clearScreen();
+        screenLineOne("Calibration err");
+        delay(2000);
+      }
+    
     }
     /*
      * alarmTripped() is a function which checks if the alarm has been tripped. It looks at the
@@ -86,6 +145,24 @@ class SecuritySystem{
        * we can balance it with the keypad's input. This sensor is a lot faster than
        * a human finger, so this should be very doable.
        */
+      int echo = sonar.ping_median();
+      int cm = sonar.convert_cm(echo);
+      if(myAbs(cm - calibratedDistance) > 3){
+        /*if(firstTrip == 0){
+          firstTrip = millis();
+          if(firstTrip == 0){
+            firstTrip++;
+          }
+        }else{
+          if(millis() - firstTrip > 5){
+            firstTrip = 0;
+            return true;
+          }
+        }*/
+        return true; //FIXME remove this if this iteration no work
+      }/*else{
+        firstTrip = 0;
+      }*/
       return false;
     }
     /*
@@ -107,6 +184,13 @@ class SecuritySystem{
       /*
        * Empty so far. It'll just say that the alarm is tripped.
        */
+      if(millis() % 10 == 0){
+        NewTone(buzPin, millis() % 3000);
+        analogWrite(redPin0, (millis() + 128) % 256);
+        analogWrite(redPin1, millis() % 256);
+        analogWrite(bluePin0, (millis() + 128) % 256);
+        analogWrite(bluePin1, millis() % 256);
+      }
       tripped = true;
     }
     /*
@@ -115,9 +199,14 @@ class SecuritySystem{
     void endAlarm(){
       /*
        * Whatever commands you need to end the alarm sequence should go here.
-       * notone()? I'm not sure what else you might want to use; that one's
+       * noNewTone()? I'm not sure what else you might want to use; that one's
        * pretty open-ended.
        */
+      noNewTone(buzPin);
+      analogWrite(redPin0, 0);
+      analogWrite(redPin1, 0);
+      analogWrite(bluePin0, 0);
+      analogWrite(bluePin1, 0);
       tripped = false;
     }
     /*
@@ -149,6 +238,20 @@ class SecuritySystem{
         }
         for(int i = 0; i < 4; i++){
           do{
+            if(!tripped){
+              tripped = alarmTripped();
+              if(tripped){
+                screen.write(254);
+                screen.write(192);
+                screen.write("!!!");
+                screen.write(254);
+                screen.write(205);
+                screen.write("!!!");
+              }
+            }
+            if(tripped){
+              soundAlarm();
+            }
             ch = input();
           }while(ch == '\0');
           tryPIN[i] = ch;
@@ -190,7 +293,8 @@ class SecuritySystem{
      */
     SecuritySystem(JKeypad &Lkeypad, SoftwareSerial &Lscreen, NewPing &Lsonar):
     calibratedDistance(-1), keypad(Lkeypad), screen(Lscreen), state(SETPIN), 
-    sonar(Lsonar), tripped(false), testing(false){
+    sonar(Lsonar), tripped(false), testing(false), firstTrip(0),
+    redPin0(11), redPin1(10), bluePin0(9), bluePin1(6), buzPin(5){
       strncpy(PIN, "    ", 4);
     }
     /*
@@ -248,7 +352,11 @@ class SecuritySystem{
         ch = input();
       }while(ch != 'A');
       calibrateRoutine();
-      state = DISARMED;
+      if(calibratedDistance >= 0){
+        state = DISARMED; 
+      }else{
+        state = CALIBRATE;
+      }
     }
     /*
      * input() returns whatever input has been received from the keypad. This is
@@ -320,6 +428,7 @@ class SecuritySystem{
         case 'A':
           testAlarm();
           break;
+        case '\0':
         case 'D':
           validatePIN();
           break;
@@ -330,10 +439,13 @@ class SecuritySystem{
     }
 };
 
+JKeypad keypad(A4/*9*/,8,7,A5/*6*/,13,12,A2/*11*/,A3/*10*/);
 
-JKeypad keypad(9,8,7,6,13,12,11,10);
+//11 10 9 6 5
+const int trigPin = A0;
+const int echoPin = A1;
 SoftwareSerial LCD(3, 2);
-NewPing sonar(A0,A1);
+NewPing sonar(trigPin,echoPin,100);
 /*
  * LCD: send 254, then the cursor positions
  * positions:
@@ -344,8 +456,8 @@ SecuritySystem sys(keypad, LCD, sonar);
 
 void setup() {
   LCD.begin(9600);
-  delay(500);
   Serial.begin(9600);
+  delay(1000);
 }
 
 void loop() {
